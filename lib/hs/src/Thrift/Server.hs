@@ -27,7 +27,7 @@ import Control.Concurrent ( forkIO )
 import Control.Exception
 import Control.Monad ( forever, when )
 
-import Network
+import Network.Socket
 
 import System.IO
 
@@ -35,6 +35,18 @@ import Thrift
 import Thrift.Transport.Handle()
 import Thrift.Protocol.Binary
 
+listenOn :: PortNumber -> IO Socket
+listenOn port =
+    bracketOnError
+        (socket AF_INET Stream defaultProtocol)
+        (close)
+        (\sock -> do
+            setSocketOption sock ReuseAddr 1
+            withFdSocket sock $ setCloseOnExecIfNeeded
+            bind sock (SockAddrInet port 0)
+            listen sock 1024
+            return sock
+        )
 
 -- | A threaded sever that is capable of using any Transport or Protocol
 -- instances.
@@ -42,7 +54,7 @@ runThreadedServer :: (Protocol i, Protocol o)
                   => (Socket -> IO (i, o))
                   -> h
                   -> (h -> (i, o) -> IO Bool)
-                  -> PortID
+                  -> PortNumber
                   -> IO a
 runThreadedServer accepter hand proc_ port = do
     socket <- listenOn port
@@ -53,9 +65,10 @@ runBasicServer :: h
                -> (h -> (BinaryProtocol Handle, BinaryProtocol Handle) -> IO Bool)
                -> PortNumber
                -> IO a
-runBasicServer hand proc_ port = runThreadedServer binaryAccept hand proc_ (PortNumber port)
+runBasicServer hand proc_ port = runThreadedServer binaryAccept hand proc_ port
   where binaryAccept s = do
-            (h, _, _) <- accept s
+            (sock, _sockAddr) <- accept s
+            h <- socketToHandle sock ReadWriteMode
             return (BinaryProtocol h, BinaryProtocol h)
 
 acceptLoop :: IO t -> (t -> IO Bool) -> IO a
