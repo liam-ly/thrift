@@ -27,11 +27,11 @@ module Thrift.Transport.Handle
     , HandleSource(..)
     ) where
 
-import Control.Exception ( catch, throw )
+import Control.Exception ( bracketOnError, catch, throw )
 import Data.ByteString.Internal (c2w)
 import Data.Functor
 
-import Network
+import Network.Socket
 
 import System.IO
 import System.IO.Error ( isEOFError )
@@ -64,8 +64,17 @@ class HandleSource s where
 instance HandleSource FilePath where
     hOpen s = openFile s ReadWriteMode
 
-instance HandleSource (HostName, PortID) where
-    hOpen = uncurry connectTo
+instance HandleSource (HostName, PortNumber) where
+    hOpen (host, port) = do
+        let hints = defaultHints { addrSocketType = Stream }
+        addr <- head <$> getAddrInfo (Just hints) (Just host) (Just (show port))
+        bracketOnError
+            ( socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr) )
+            close
+            ( \sock ->
+                connect sock (addrAddress addr) *> socketToHandle sock ReadWriteMode
+            )
+
 
 throwTransportExn :: IOError -> IO a
 throwTransportExn e = if isEOFError e
